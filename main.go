@@ -1,16 +1,29 @@
 package main
 
 import (
-	"fmt"
 	client2 "geeRPC/client"
-	geerpc "geeRPC/codec"
+	geerpc "geeRPC/service"
 	"log"
 	"net"
 	"sync"
 	"time"
 )
 
+type Foo int
+
+type Args struct{ Num1, Num2 int }
+
+func (f Foo) Sum(args Args, reply *int) error {
+	*reply = args.Num1 + args.Num2
+	return nil
+}
+
 func startServer(addr chan string) {
+	// 注册 Foo 到 Server 中，并启动 RPC 服务
+	var foo Foo
+	if err := geerpc.Register(&foo); err != nil {
+		log.Fatal("register error: ", err)
+	}
 	listen, err := net.Listen("tcp", ":9999")
 	if err != nil {
 		log.Fatal("network error: ", err)
@@ -36,12 +49,12 @@ func main() {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			args := fmt.Sprintf("geerpc req %d", i)
-			var reply string
+			args := &Args{Num1: i, Num2: i * i}
+			var reply int
 			if err := client.Call("Foo.Sum", args, &reply); err != nil {
 				log.Fatal("call Foo.Sum error: ", err)
 			}
-			log.Println("reply:", reply)
+			log.Printf("%d + %d = %d", args.Num1, args.Num2, reply)
 		}(i)
 	}
 	// 等待所有请求处理完成

@@ -88,6 +88,37 @@ Client工作流程：
 6. 如果`Call`实例中的`Error`字段为空，说明调用过程中没有出现错误，需要返回`Reply`字段。
 7. 如果`Call`实例中的`Done`字段不为空，说明调用过程中出现了错误，需要将`Call`实例中的`Done`字段置为`true`，并调用`Call`实例中的`Done`方法。
 
+### 服务注册
+1. 通过反射实现服务注册功能
+2. 在服务端实现服务调用
+
+#### 结构体映射为服务
+RPC 框架的一个基础能力是：像调用本地程序一样调用远程服务。那如何将程序映射为服务呢?  
+对 Go 来说，这个问题就变成了如何将结构体的方法映射为服务。
+
+对 net/rpc 而言，一个函数需要能够被远程调用，需要满足如下五个条件：  
+the method’s type is exported. – 方法所属类型是导出的。  
+the method is exported. – 方式是导出的。  
+the method has two arguments, both exported (or builtin) types. – 两个入参，均为导出或内置类型。  
+the method’s second argument is a pointer. – 第二个入参必须是一个指针。  
+the method has return type error. – 返回值为 error 类型。  
+
+更直观一些：
+```go
+func (t *T) MethodName(argType T1, replyType *T2) error
+```
+
+假设客户端发过来一个请求，包含 ServiceMethod 和 Argv。
+```json
+{
+    "ServiceMethod":"T.MethodName",
+    "Argv":"0101110101..." // 序列化之后的字节流
+}
+```
+通过 “T.MethodName” 可以确定调用的是类型 T 的 MethodName，如果硬编码实现这个功能，那么就要写多个`switch-case`覆盖所有情况，每个情况要编写等量的代码。
+但是如果借助反射就可以将这个映射过程自动化，可以非常容易地获取某个结构体的所有方法，并且能够通过方法，获取到该方法所有的参数类型与返回值。
+
+
 ## 🤝 贡献指南
 
 如有任何问题或建议，欢迎提交 issue 或 PR。

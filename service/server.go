@@ -1,8 +1,7 @@
-package geerpc
+package service
 
 import (
 	"encoding/json"
-	"fmt"
 	"geeRPC/codec/codec"
 	"io"
 	"log"
@@ -24,12 +23,16 @@ var DefaultOption = &Option{
 }
 
 // Server represents an RPC Server.
-type Server struct{}
+type Server struct {
+	serviceMap sync.Map
+}
 
 // request stores all information of a call
 type request struct {
 	header       *codec.Header
 	argv, replyv reflect.Value
+	mtype        *methodType
+	svc          *service
 }
 
 // NewServer returns a new Server.
@@ -128,13 +131,25 @@ func (server *Server) readRequest(cc codec.Codec) (*request, error) {
 		return nil, err
 	}
 	req := &request{header: header}
-	// TODO: now we don't know the type of request argv
-	// day 1, just suppose it's string
-	// reflect包实现了运行时反射，允许程序操作任意类型的对象。
-	req.argv = reflect.New(reflect.TypeOf(""))
-	if err = cc.ReadBody(req.argv.Interface()); err != nil {
-		log.Println("rpc server: read argv err:", err)
+	req.svc, req.mtype, err = server.findService(header.ServiceMethod)
+	if err != nil {
+		return req, err
 	}
+	// 1. 最重要的内容：newArgv() 和 newReplyv() 两个方法创建出两个入参实例
+	req.argv = req.mtype.newArgv()
+	req.replyv = req.mtype.newReplyv()
+
+	// make sure that argvi is a pointer, ReadBody need a pointer as parameter
+	argvi := req.argv.Interface()
+	if req.argv.Type().Kind() != reflect.Ptr {
+		argvi = req.argv.Addr().Interface()
+	}
+	// 2. 通过 cc.ReadBody() 将请求报文反序列化为第一个入参 argv
+	if err = cc.ReadBody(argvi); err != nil {
+		log.Println("rpc server: read body err:", err)
+		return req, err
+	}
+
 	return req, nil
 }
 
@@ -146,11 +161,14 @@ func (server *Server) sendResponse(cc codec.Codec, header *codec.Header, body in
 	}
 }
 
-func (server *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, waitDone *sync.WaitGroup) {
-	// TODO, should call registered rpc methods to get the right replyv
-	// day 1, just print argv and send a hello message
-	defer waitDone.Done()
-	log.Println(req.header, req.argv.Elem())
-	req.replyv = reflect.ValueOf(fmt.Sprintf("geerpc resp %d", req.header.Seq))
+func (server *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup) {
+	defer wg.Done()
+	// 通过 req.svc.call 完成方法调用，将 replyv 传递给 sendResponse 完成序列化即可。
+	err := req.svc.call(req.mtype, req.argv, req.replyv)
+	if err != nil {
+		req.header.Error = err.Error()
+		server.sendResponse(cc, req.header, invalidRequest, sending)
+		return
+	}
 	server.sendResponse(cc, req.header, req.replyv.Interface(), sending)
 }

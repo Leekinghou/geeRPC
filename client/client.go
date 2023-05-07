@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"geeRPC/codec"
 	"geeRPC/codec/codec"
+	"geeRPC/service"
 	"io"
 	"log"
 	"net"
@@ -19,8 +19,8 @@ GeeRPC 客户端最核心的部分 Client
 // Client closing 和 shutdown 任意一个值置为 true，则表示 Client 处于不可用的状态，
 // 但有些许的差别，closing 是用户主动关闭的，即调用 Close 方法，而 shutdown 置为 true 一般是有错误发生。
 type Client struct {
-	cc       codec.Codec // cc 是消息的编解码器，用来序列化将要发送出去的请求，以及反序列化接收到的响应。
-	opt      *geerpc.Option
+	cc       codec.Codec      // cc 是消息的编解码器，用来序列化将要发送出去的请求，以及反序列化接收到的响应。
+	opt      *service.Option  // opt 是 Option 的一个指针，包含了 Option 中的所有选项。
 	sending  sync.Mutex       // sending 是一个互斥锁，为了保证请求的有序发送，即防止出现多个请求报文混淆。
 	header   codec.Header     // header 是每一个请求独有的，因此每次请求都要拥有独立的 header。
 	mu       sync.Mutex       // mu 用来保护 pending 字典。
@@ -52,7 +52,7 @@ func (client *Client) IsAvailable() bool {
 }
 
 // Dial Dial 函数，便于用户传入服务端地址，创建 Client 实例。
-func Dial(network, address string, opts ...*geerpc.Option) (client *Client, err error) {
+func Dial(network, address string, opts ...*service.Option) (client *Client, err error) {
 	opt, err := parseOptions(opts...)
 	if err != nil {
 		return nil, err
@@ -70,7 +70,7 @@ func Dial(network, address string, opts ...*geerpc.Option) (client *Client, err 
 	return NewClient(conn, opt)
 }
 
-func NewClient(conn net.Conn, opt *geerpc.Option) (*Client, error) {
+func NewClient(conn net.Conn, opt *service.Option) (*Client, error) {
 	f := codec.NewCodecFuncMap[opt.CodecType]
 	if f == nil {
 		err := fmt.Errorf("invalid codec type %s", opt.CodecType)
@@ -86,7 +86,7 @@ func NewClient(conn net.Conn, opt *geerpc.Option) (*Client, error) {
 	return newClientCodec(f(conn), opt), nil
 }
 
-func newClientCodec(cc codec.Codec, opt *geerpc.Option) *Client {
+func newClientCodec(cc codec.Codec, opt *service.Option) *Client {
 	client := &Client{
 		seq:     1, // seq starts with 1, 0 means invalid call
 		cc:      cc,
@@ -98,18 +98,18 @@ func newClientCodec(cc codec.Codec, opt *geerpc.Option) *Client {
 	return client
 }
 
-func parseOptions(opts ...*geerpc.Option) (*geerpc.Option, error) {
+func parseOptions(opts ...*service.Option) (*service.Option, error) {
 	// if opts is nil or pass nil as parameter
 	if len(opts) == 0 || opts[0] == nil {
-		return geerpc.DefaultOption, nil
+		return service.DefaultOption, nil
 	}
 	if len(opts) != 1 {
 		return nil, errors.New("number of options is more than 1")
 	}
 	opt := opts[0]
-	opt.MagicNumber = geerpc.DefaultOption.MagicNumber
+	opt.MagicNumber = service.DefaultOption.MagicNumber
 	if opt.CodecType == "" {
-		opt.CodecType = geerpc.DefaultOption.CodecType
+		opt.CodecType = service.DefaultOption.CodecType
 	}
 	return opt, nil
 }
