@@ -1,12 +1,12 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	client2 "geeRPC/client"
 	geerpc "geeRPC/codec"
-	"geeRPC/codec/codec"
 	"log"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -22,25 +22,28 @@ func startServer(addr chan string) {
 }
 
 func main() {
+	log.SetFlags(0)
 	addr := make(chan string)
 	go startServer(addr)
-
-	conn, _ := net.Dial("tcp", <-addr) // 阻塞，等待服务器启动完毕
-	defer func() { _ = conn.Close() }()
+	client, _ := client2.Dial("tcp", <-addr)
+	defer func() { _ = client.Close() }()
 
 	time.Sleep(time.Second)
-	// 客户端首先发送 Option 进行协议交换，接下来发送消息头 h := &codec.Header{}，和消息体 geerpc req ${h.Seq}。
-	_ = json.NewEncoder(conn).Encode(geerpc.DefaultOption)
-	cc := codec.NewGobCodec(conn)
+	// send request & receive response
+	var wg sync.WaitGroup
+	//  并发 5 个 RPC 同步调用
 	for i := 0; i < 5; i++ {
-		h := &codec.Header{
-			ServiceMethod: "Foo.Sum",
-			Seq:           uint64(i),
-		}
-		_ = cc.Write(h, fmt.Sprintf("geerpc req: %d", h.Seq))
-		_ = cc.ReadHeader(h)
-		var reply string
-		_ = cc.ReadBody(&reply)
-		log.Println("reply: ", reply)
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			args := fmt.Sprintf("geerpc req %d", i)
+			var reply string
+			if err := client.Call("Foo.Sum", args, &reply); err != nil {
+				log.Fatal("call Foo.Sum error: ", err)
+			}
+			log.Println("reply:", reply)
+		}(i)
 	}
+	// 等待所有请求处理完成
+	wg.Wait()
 }

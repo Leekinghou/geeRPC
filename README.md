@@ -56,13 +56,37 @@ yarn dev
 ```
 | Option | Header1 | Body1 | Header2 | Body2 | ...
 ```
-- 支持自定义项目信息，如标题、介绍、安装方式等。
 
-- 支持添加徽标、截图、代码示例等常用模块。
+服务端工作流程：
+1. 首先需要完成一开始的协议交换，即接收`Option`，协商好消息的编解码方式之后，再创建一个子协程调用`serveConn()`处理后续的请求。
+2. `serveConn()`方法中，首先需要从连接中读取完整的消息，然后解码`Option`，根据`Option`中的`CodeType`解码`Header`和`Body`，最后根据`Header`中的`ServiceMethod`找到对应的`Service`实例，然后调用`Service`实例的`Call()`方法，将`Body`传入，得到`Call`实例，最后将`Call`实例中的`Reply`编码后发送给客户端。
+3. `Call`实例中的`Error`字段不为空，说明调用过程中出现了错误，需要将`Call`实例中的`Error`字段编码后发送给客户端。
+4. `Call`实例中的`Error`字段为空，说明调用过程中没有出现错误，需要将`Call`实例中的`Reply`字段编码后发送给客户端。
+5. 如果`Call`实例中的`Done`字段不为空，说明调用过程中出现了错误，需要将`Call`实例中的`Error`字段编码后发送给客户端。
+6. 如果`Call`实例中的`Done`字段为空，说明调用过程中没有出现错误，需要将`Call`实例中的`Reply`字段编码后发送给客户端。
 
-- 支持自动生成 TOC（Table of Contents）目录。
+### 客户端
 
-- 支持多种风格的 README 模板，可根据需求进行选择。
+对 net/rpc 而言，一个函数需要能够被远程调用，需要满足如下五个条件：
+1. the method’s type is exported.
+2. the method is exported.
+3. the method has two arguments, both exported (or builtin) types.
+4. the method’s second argument is a pointer.
+5. the method has return type error.
+
+更直观一些：
+```
+func (t *T) MethodName(argType T1, replyType *T2) error
+```
+
+Client工作流程：
+1. 创建 Client 实例时，首先需要完成一开始的协议交换，即发送`Option`给服务端，协商好消息的编解码方式之后， 再创建一个子协程调用 receive() 接收`Option`响应
+2. 调用 Call() 方法时，首先需要创建一个`Call`实例，然后将`Call`实例放入`Client`的`pending`中，然后调用 send() 方法发送请求，最后调用 receive() 方法接收响应。
+3. send() 方法中，首先需要将`Call`实例中的`ServiceMethod`、`Seq`、`Error`等信息编码成`Header`，然后将`Header`和`Call`实例中的`Args`编码成`Body`，最后将`Option`、`Header`和`Body`编码成一个完整的消息，发送给服务端。
+4. receive() 方法中，首先需要从连接中读取完整的消息，然后解码`Option`，根据`Option`中的`CodeType`解码`Header`和`Body`，最后根据`Header`中的`Seq`找到对应的`Call`实例，将`Body`解码到`Call`实例的`Reply`字段中。
+5. 如果`Call`实例中的`Error`字段不为空，说明调用过程中出现了错误，需要返回错误信息。
+6. 如果`Call`实例中的`Error`字段为空，说明调用过程中没有出现错误，需要返回`Reply`字段。
+7. 如果`Call`实例中的`Done`字段不为空，说明调用过程中出现了错误，需要将`Call`实例中的`Done`字段置为`true`，并调用`Call`实例中的`Done`方法。
 
 ## 🤝 贡献指南
 
@@ -70,4 +94,4 @@ yarn dev
 
 ## 📄 许可协议
 
-README GPT 使用 MIT 许可协议。详情请参见 [LICENSE](./LICENSE) 文件。
+GeeRPC 使用 MIT 许可协议。详情请参见 [LICENSE](./LICENSE) 文件。
