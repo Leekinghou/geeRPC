@@ -13,34 +13,10 @@ GeeRPC实现了Go语言官方的标准库`net/rpc`，并在此基础上，新增
 最终代码约1000行
 
 ## 🚀 快速开始
+1. cd main && go run main.go
 
-1. 安装依赖：
+2. 访问 http://localhost:9999 即可开始使用。
 
-```bash
-npm install
-# 或
-yarn install
-```
-
-2. 启动开发服务器：
-
-```bash
-npm run dev
-# 或
-yarn dev
-```
-
-3. 访问 http://localhost:3000 即可开始使用。
-
-## 📖 使用说明
-
-1. 在左侧输入框中填写项目信息，如标题、介绍、安装方式等。
-
-2. 在右侧选择需要添加的部分，如徽标、截图、代码示例等。
-
-3. 点击「生成 README」按钮，即可自动生成 README 文件。
-
-4. 将生成的 README 复制到项目根目录下的 README.md 文件中即可。
 
 ## 💡 功能特性
 ### 服务端与消息编码
