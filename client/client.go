@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
+	"strings"
 	"sync"
 )
 
@@ -51,24 +54,24 @@ func (client *Client) IsAvailable() bool {
 	return !client.shutdown && !client.closing
 }
 
-// Dial Dial 函数，便于用户传入服务端地址，创建 Client 实例。
-func Dial(network, address string, opts ...*service.Option) (client *Client, err error) {
-	opt, err := parseOptions(opts...)
-	if err != nil {
-		return nil, err
-	}
-	conn, err := net.Dial(network, address)
-	if err != nil {
-		return nil, err
-	}
-	// close the connection if client is nil
-	defer func() {
-		if client == nil {
-			_ = conn.Close()
-		}
-	}()
-	return NewClient(conn, opt)
-}
+//// Dial Dial 函数，便于用户传入服务端地址，创建 Client 实例。
+//func Dial(network, address string, opts ...*service.Option) (client *Client, err error) {
+//	opt, err := parseOptions(opts...)
+//	if err != nil {
+//		return nil, err
+//	}
+//	conn, err := net.Dial(network, address)
+//	if err != nil {
+//		return nil, err
+//	}
+//	// close the connection if client is nil
+//	defer func() {
+//		if client == nil {
+//			_ = conn.Close()
+//		}
+//	}()
+//	return NewClient(conn, opt)
+//}
 
 func NewClient(conn net.Conn, opt *service.Option) (*Client, error) {
 	f := codec.NewCodecFuncMap[opt.CodecType]
@@ -134,10 +137,52 @@ func (client *Client) Go(serviceMethod string, args, reply interface{}, done cha
 
 // Call 调用命名函数，等待它完成;
 // 返回错误状态
-func (client *Client) Call(serviceMethod string, args, reply interface{}) error {
-	call := <-client.Go(serviceMethod, args, reply, make(chan *Call, 1)).Done
-	return call.Error
-}
+//func (client *Client) Call(serviceMethod string, args, reply interface{}) error {
+//	call := <-client.Go(serviceMethod, args, reply, make(chan *Call, 1)).Done
+//	return call.Error
+//}
 
 // Go 和 Call 是客户端暴露给用户的两个 RPC 服务调用接口，Go 是一个异步接口，返回 call 实例。
 // Call 是对 Go 的封装，阻塞 call.Done，等待响应返回，是一个同步接口。
+
+//type newClientFunc func(conn net.Conn, opt *service.Option) (client *Client, err error)
+
+func NewHTTPClient(conn net.Conn, opt *service.Option) (*Client, error) {
+	_, _ = io.WriteString(conn, fmt.Sprintf("CONNECT %s HTTP/1.0\n\n", "/_geerpc_"))
+
+	// Require successful HTTP response
+	// before switching to RPC protocol.
+	resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: "CONNECT"})
+	if err == nil && resp.Status == "200 Connected to Gee RPC" {
+		return NewClient(conn, opt)
+	}
+	if err == nil {
+		err = errors.New("unexpected HTTP response: " + resp.Status)
+	}
+	return nil, err
+}
+
+// DialHTTP connects to an HTTP RPC server at the specified network address
+// listening on the default HTTP RPC path.
+func DialHTTP(network, address string, opts ...*service.Option) (*Client, error) {
+	return dialTimeout(NewHTTPClient, network, address, opts...)
+}
+
+// XDial calls different functions to connect to a RPC server
+// according the first parameter rpcAddr.
+// rpcAddr is a general format (protocol@addr) to represent a rpc server
+// eg, http@10.0.0.1:7001, tcp@10.0.0.1:9999, unix@/tmp/geerpc.sock
+func XDial(rpcAddr string, opts ...*service.Option) (*Client, error) {
+	parts := strings.Split(rpcAddr, "@")
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("rpc client err: wrong format '%s', expect protocol@addr", rpcAddr)
+	}
+	protocol, addr := parts[0], parts[1]
+	switch protocol {
+	case "http":
+		return DialHTTP("tcp", addr, opts...)
+	default:
+		// tcp, unix or other transport protocol
+		return Dial(protocol, addr, opts...)
+	}
+}

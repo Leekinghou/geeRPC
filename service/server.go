@@ -6,33 +6,35 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"reflect"
 	"sync"
+	"time"
 )
 
 const MagicNumber = 0x3bef5c
+const (
+	connected        = "200 Connected to Gee RPC"
+	defaultRPCPath   = "/_geerpc_"
+	defaultDebugPath = "/debug/geerpc"
+)
 
 type Option struct {
-	MagicNumber int        // MagicNumber marks this's a geerpc request
-	CodecType   codec.Type // client may choose different Codec to encode body
+	MagicNumber    int           // MagicNumber marks this's a geerpc request
+	CodecType      codec.Type    // client may choose different Codec to encode body
+	ConnectTimeout time.Duration // 0 means no limit
+	HandleTimeout  time.Duration
 }
 
 var DefaultOption = &Option{
-	MagicNumber: MagicNumber,
-	CodecType:   codec.GobType,
+	MagicNumber:    MagicNumber,
+	CodecType:      codec.GobType,
+	ConnectTimeout: time.Second * 10,
 }
 
 // Server represents an RPC Server.
 type Server struct {
 	serviceMap sync.Map
-}
-
-// request stores all information of a call
-type request struct {
-	header       *codec.Header
-	argv, replyv reflect.Value
-	mtype        *methodType
-	svc          *service
 }
 
 // NewServer returns a new Server.
@@ -43,24 +45,13 @@ func NewServer() *Server {
 // DefaultServer Accept accepts connections on the listener and serves requests
 var DefaultServer = NewServer()
 
-// Accept accepts connections on the listener and serves requests
-// for each incoming connection.
-func (server *Server) Accept(lis net.Listener) {
-	// for 循环等待 socket 连接建立
-	for {
-		conn, err := lis.Accept()
-		if err != nil {
-			log.Println("rpc server: accept error: ", err)
-			return
-		}
-		// 开启子协程处理，处理过程交给了 ServerConn 方法
-		go server.ServeConn(conn)
-	}
+// request stores all information of a call
+type request struct {
+	header       *codec.Header
+	argv, replyv reflect.Value
+	mtype        *methodType
+	svc          *service
 }
-
-// Accept accepts connections on the listener and serves requests
-// for each incoming connection.
-func Accept(lis net.Listener) { DefaultServer.Accept(lis) }
 
 // ServeConn ServeConn在单连接上运行服务器。
 // ServeConn 阻塞，服务连接，直到客户端挂起。
@@ -86,6 +77,25 @@ func (server *Server) ServeConn(conn io.ReadWriteCloser) {
 }
 
 var invalidRequest = struct{}{}
+
+// Accept accepts connections on the listener and serves requests
+// for each incoming connection.
+func (server *Server) Accept(lis net.Listener) {
+	// for 循环等待 socket 连接建立
+	for {
+		conn, err := lis.Accept()
+		if err != nil {
+			log.Println("rpc server: accept error: ", err)
+			return
+		}
+		// 开启子协程处理，处理过程交给了 ServerConn 方法
+		go server.ServeConn(conn)
+	}
+}
+
+// Accept accepts connections on the listener and serves requests
+// for each incoming connection.
+func Accept(lis net.Listener) { DefaultServer.Accept(lis) }
 
 //serveCodec 的过程非常简单。主要包含三个阶段
 //读取请求 readRequest
@@ -171,4 +181,63 @@ func (server *Server) handleRequest(cc codec.Codec, req *request, sending *sync.
 		return
 	}
 	server.sendResponse(cc, req.header, req.replyv.Interface(), sending)
+}
+
+//func (server *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup, timeout time.Duration) {
+//	defer wg.Done()
+//	called := make(chan struct{})
+//	sent := make(chan struct{})
+//	go func() {
+//		err := req.svc.call(req.mtype, req.argv, req.replyv)
+//		called <- struct{}{}
+//		if err != nil {
+//			req.header.Error = err.Error()
+//			server.sendResponse(cc, req.header, invalidRequest, sending)
+//			sent <- struct{}{}
+//			return
+//		}
+//		server.sendResponse(cc, req.header, req.replyv.Interface(), sending)
+//		sent <- struct{}{}
+//	}()
+//
+//	if timeout == 0 {
+//		<-called
+//		<-sent
+//		return
+//	}
+//	select {
+//	case <-time.After(timeout):
+//		req.header.Error = fmt.Sprintf("rpc server: request handle timeout: expect within %s", timeout)
+//		server.sendResponse(cc, req.header, invalidRequest, sending)
+//	case <-called:
+//		<-sent
+//	}
+//}
+
+// ServeHTTP implements an http.Handler that answers RPC requests.
+func (server *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != "CONNECT" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_, _ = io.WriteString(w, "405 must CONNECT\n")
+		return
+	}
+	conn, _, err := w.(http.Hijacker).Hijack()
+	if err != nil {
+		log.Print("rpc hijacking ", req.RemoteAddr, ": ", err.Error())
+		return
+	}
+	_, _ = io.WriteString(conn, "HTTP/1.0 "+connected+"\n\n")
+	server.ServeConn(conn)
+}
+
+// HandleHTTP registers an HTTP handler for RPC messages on rpcPath.
+// It is still necessary to invoke http.Serve(), typically in a go statement.
+func (server *Server) HandleHTTP() {
+	http.Handle(defaultRPCPath, server)
+}
+
+// HandleHTTP is a convenient approach for default server to register HTTP handlers
+func HandleHTTP() {
+	DefaultServer.HandleHTTP()
 }
